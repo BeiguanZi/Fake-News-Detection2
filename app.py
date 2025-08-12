@@ -120,9 +120,9 @@ if st.button("Run Prediction"):
     for word in top_tokens:
         highlighted = re.sub(rf"(?i)\\b{re.escape(word)}\\b", f"<span style='color:#c00; font-weight:bold'>{word}</span>", highlighted)
 
-    st.markdown("""<div style='border-left:4px solid #c00; padding:1em'>
-    <strong>🧠 Highlighted Original Text</strong></div>""", unsafe_allow_html=True)
-    st.markdown(highlighted, unsafe_allow_html=True)
+    st.markdown("""<div style='border-left:4px solid #c00; padding:1em; margin-top:1em;'>
+    <div style='white-space: pre-wrap;'>
+    """ + highlighted + """</div></div>""", unsafe_allow_html=True)
 
     st.session_state.history.append({
         "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -180,7 +180,7 @@ if st.session_state.history:
         pdf.ln(2)
 
     pdf_bytes = BytesIO()
-    pdf.output(pdf_bytes)
+    pdf_bytes.write(pdf.output(dest='S').encode('latin1'))
     pdf_bytes.seek(0)
 
     st.download_button("📄 Download Report as PDF", pdf_bytes, "fake_news_report.pdf", mime="application/pdf")
