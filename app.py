@@ -212,11 +212,16 @@ if st.session_state.history:
         pdf.set_font("Arial", 'B', 11)
         pdf.cell(0, 10, f"[{row['Timestamp']}]", ln=True)
         pdf.set_font("Arial", size=11)
-        pdf.multi_cell(0, 8, f"Model: {row['Model']}
-Prediction: {row['Prediction']}
-Fake Probability: {row['Fake Probability']*100:.2f}%
-Text: {row['Text']}
-")
+        pdf.multi_cell(0, 8, (
+            f"Model: {row['Model']}
+"
+            f"Prediction: {row['Prediction']}
+"
+            f"Fake Probability: {row['Fake Probability']*100:.2f}%
+"
+            f"Text: {row['Text']}
+"
+        ))
         pdf.ln(2)
 
     pdf_buffer = BytesIO()
