@@ -85,8 +85,7 @@ if uploaded_file is not None:
         try:
             import fitz  # PyMuPDF
             with fitz.open(stream=uploaded_file.read(), filetype="pdf") as doc:
-                file_text = "
-".join([page.get_text() for page in doc])
+                file_text = "\n".join([page.get_text() for page in doc])
         except Exception as e:
             st.warning(f"Could not read PDF file: {e}")
 
