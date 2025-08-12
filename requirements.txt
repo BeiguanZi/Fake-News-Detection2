@@ -6,3 +6,4 @@ nltk
 fpdf
 matplotlib
 PyMuPDF
+reportlab
