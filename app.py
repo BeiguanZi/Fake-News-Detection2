@@ -118,7 +118,7 @@ if st.button("Run Prediction"):
 
     highlighted = user_input
     for word in top_tokens:
-        highlighted = re.sub(rf"(?i)\\b{re.escape(word)}\\b", f"<span style='color:#c00; font-weight:bold'>{word}</span>", highlighted)
+        highlighted = re.sub(rf"(?i)\\b{re.escape(word)}\\b", f"<span style='background-color:#ffe6e6; color:#c00; font-weight:bold'>{word}</span>", highlighted)
 
     st.markdown("""<div style='border-left:4px solid #c00; padding:1em; margin-top:1em;'>
     <div style='white-space: pre-wrap;'>
@@ -142,7 +142,6 @@ if st.session_state.history:
     csv.seek(0)
     st.download_button("📥 Download CSV", csv, "predictions.csv")
 
-    # PDF Export with charts
     avg = df.groupby("Model")["Fake Probability"].mean()
     fig, ax = plt.subplots()
     avg.plot(kind="bar", ax=ax)
@@ -166,12 +165,18 @@ if st.session_state.history:
     pdf.image(pie_chart.name, w=140)
     pdf.ln(5)
 
+    def safe_str(text):
+        try:
+            return text.encode('latin1').decode('latin1')
+        except UnicodeEncodeError:
+            return text.encode('latin1', errors='ignore').decode('latin1')
+
     for _, row in df.iterrows():
         pdf.set_font("Arial", 'B', 11)
-        pdf.cell(0, 10, f"[{row['Timestamp']}]")
+        pdf.cell(0, 10, safe_str(f"[{row['Timestamp']}]"))
         pdf.ln(6)
         pdf.set_font("Arial", size=11)
-        pdf.multi_cell(0, 8, (
+        pdf.multi_cell(0, 8, safe_str(
             f"Model: {row['Model']}\n"
             f"Prediction: {row['Prediction']}\n"
             f"Fake Probability: {row['Fake Probability']*100:.2f}%\n"
@@ -180,10 +185,11 @@ if st.session_state.history:
         pdf.ln(2)
 
     pdf_bytes = BytesIO()
-    pdf_bytes.write(pdf.output(dest='S').encode('latin1', errors='replace'))
+    pdf_bytes.write(pdf.output(dest='S').encode('latin1', errors='ignore'))
     pdf_bytes.seek(0)
 
     st.download_button("📄 Download Report as PDF", pdf_bytes, "fake_news_report.pdf", mime="application/pdf")
+
     if st.button("🧹 Clear Prediction History"):
         st.session_state.history.clear()
         st.rerun()
