@@ -1,9 +1,5 @@
 # ============================================
 # Fake News Detector (Streamlit + BERT + TF-IDF)
-# - Classic models: LR / NB / SVM (+ LR+NB fusion)
-# - Deep model: BERT (+ BERT+LR fusion)
-# - Visuals: probability bar, TF-IDF keyword highlights
-# - Explanations: BERT token-level Integrated Gradients heatmap
 # ============================================
 
 import re
@@ -19,11 +15,10 @@ st.title("📰 Fake News Detector")
 st.caption("Classic ML + BERT with visual explanations. Red = pushes FAKE, Blue = pushes REAL.")
 
 # ----------------------------
-# Paths
+# Config: Hugging Face model repo
 # ----------------------------
-HF_MODEL_ID = HF_ID = "qq1244715496/fake-news-detection"
-tok, mdl, device = load_bert(HF_ID, token=st.secrets.get("HF_TOKEN"))
-
+HF_MODEL_ID = "qq1244715496/fake-news-detection"  # Your public Hugging Face repo
+HF_TOKEN = st.secrets.get("HF_TOKEN") if hasattr(st, "secrets") else None
 
 # ----------------------------
 # Load TF-IDF + classic models
@@ -40,7 +35,6 @@ tfidf, lr_model, nb_model, svm_model = load_classic()
 
 # ----------------------------
 # Text preprocessing for TF-IDF ONLY
-# BERT does NOT use this (it uses its own tokenizer)
 # ----------------------------
 import nltk
 from nltk.corpus import stopwords
@@ -52,8 +46,8 @@ STEM = PorterStemmer()
 def preprocess(text: str) -> str:
     """Light clean + stemming for TF-IDF pipeline."""
     text = text.lower()
-    text = re.sub(r"http\S+|www\S+|@\S+", "", text)      # remove URLs/handles
-    text = re.sub(r"[^a-z\s]", "", text)                 # keep letters/spaces
+    text = re.sub(r"http\S+|www\S+|@\S+", "", text)
+    text = re.sub(r"[^a-z\s]", "", text)
     tokens = text.split()
     cleaned = [STEM.stem(w) for w in tokens if w not in STOP]
     return " ".join(cleaned)
@@ -66,15 +60,15 @@ import torch
 
 @st.cache_resource(show_spinner=True)
 def load_bert(hf_id: str, token: str | None = None):
-    """Load BERT model/tokenizer once. CPU-only for Streamlit Cloud."""
+    """Load BERT model/tokenizer once."""
     tok = AutoTokenizer.from_pretrained(hf_id, token=token)
     mdl = AutoModelForSequenceClassification.from_pretrained(hf_id, token=token)
-    device = torch.device("cpu")  # Streamlit Cloud has no GPU
+    device = torch.device("cpu")
     mdl.to(device).eval()
     return tok, mdl, device
 
 def bert_prob_fake(raw_text: str, tok, mdl, device, max_len: int = 256) -> float:
-    """Return P(FAKE) using BERT (class index 1)."""
+    """Return P(FAKE) using BERT."""
     enc = tok(
         raw_text,
         return_tensors="pt",
@@ -86,26 +80,18 @@ def bert_prob_fake(raw_text: str, tok, mdl, device, max_len: int = 256) -> float
     with torch.no_grad():
         logits = mdl(**enc).logits
         probs = torch.softmax(logits, dim=-1).cpu().numpy()[0]
-    return float(probs[1])  # class 1 = FAKE
+    return float(probs[1])  # Class index 1 = FAKE
 
 # ----------------------------
-# Integrated Gradients for BERT (token-level)
+# Integrated Gradients for BERT
 # ----------------------------
 from captum.attr import IntegratedGradients
 
-def bert_ig_attributions(
-    text: str, tok, mdl, device,
-    max_len: int = 256, target_label: int = 1, n_steps: int = 32
-):
-    """
-    Compute token-level attributions via Integrated Gradients on input embeddings.
-    Returns merged_words, merged_scores (z-scored).
-    Positive score => pushes FAKE; Negative => pushes REAL.
-    """
-    enc = tok(
-        text, return_tensors="pt",
-        truncation=True, padding="max_length", max_length=max_len
-    )
+def bert_ig_attributions(text, tok, mdl, device,
+                         max_len=256, target_label=1, n_steps=32):
+    """Compute token-level attributions via IG."""
+    enc = tok(text, return_tensors="pt", truncation=True,
+              padding="max_length", max_length=max_len)
     enc = {k: v.to(device) for k, v in enc.items()}
     input_ids = enc["input_ids"]
     attention_mask = enc["attention_mask"]
@@ -125,12 +111,12 @@ def bert_ig_attributions(
     )
     token_scores = attributions.sum(dim=-1).squeeze(0).detach().cpu().numpy()
 
-    tokens = tok.convert_ids_to_tokens(input_ids[0].detach().cpu().tolist())
+    tokens = tok.convert_ids_to_tokens(input_ids[0].cpu().tolist())
     valid_len = int(attention_mask[0].sum().item())
     tokens = tokens[:valid_len]
     token_scores = token_scores[:valid_len]
 
-    # Merge wordpieces into words and sum their scores
+    # Merge wordpieces
     merged_words, merged_scores = [], []
     i = 0
     while i < len(tokens):
@@ -138,7 +124,6 @@ def bert_ig_attributions(
         if t in ("[CLS]", "[SEP]"):
             i += 1; continue
         if t.startswith("##"):
-            # shouldn't start, skip defensively
             i += 1; continue
         word = t.replace("##", "")
         score = token_scores[i]
@@ -151,48 +136,29 @@ def bert_ig_attributions(
         merged_scores.append(score)
         i = j
 
-    merged_scores = np.array(merged_scores, dtype=float)
-    # z-score for color intensity
+    merged_scores = np.array(merged_scores)
     if merged_scores.std() > 1e-6:
         merged_scores = (merged_scores - merged_scores.mean()) / (merged_scores.std() + 1e-6)
     else:
         merged_scores = merged_scores * 0.0
     return merged_words, merged_scores
 
-def build_colored_html(
-    words, scores, top_k: int = 30, min_abs_z: float = 0.0, show_dir: str = "both"
-):
-    """
-    Convert words+scores to HTML spans.
-    - top_k: only highlight top-K absolute scores
-    - min_abs_z: threshold on |z| to highlight
-    - show_dir: "both" | "fake_only" | "real_only"
-    """
+def build_colored_html(words, scores, top_k=30, min_abs_z=0.0, show_dir="both"):
+    """Convert words+scores to HTML spans."""
     order = np.argsort(np.abs(scores))[::-1]
     keep = set(order[: max(1, top_k)])
-
     html = []
     for idx, (w, s) in enumerate(zip(words, scores)):
-        # Direction filter
         if show_dir == "fake_only" and s <= 0:
             html.append(w); continue
         if show_dir == "real_only" and s >= 0:
             html.append(w); continue
-
         if idx in keep and abs(s) >= min_abs_z:
             alpha = float(min(1.0, 0.15 + 0.85 * min(1.0, abs(s) / 3.0)))
             if s > 0:
-                # red = pushes FAKE
-                html.append(
-                    f"<span style='background-color: rgba(255,0,0,{alpha});"
-                    f" color:black; padding:1px 3px; border-radius:4px'>{w}</span>"
-                )
+                html.append(f"<span style='background-color: rgba(255,0,0,{alpha}); color:black'>{w}</span>")
             elif s < 0:
-                # blue = pushes REAL
-                html.append(
-                    f"<span style='background-color: rgba(0,120,255,{alpha});"
-                    f" color:white; padding:1px 3px; border-radius:4px'>{w}</span>"
-                )
+                html.append(f"<span style='background-color: rgba(0,120,255,{alpha}); color:white'>{w}</span>")
             else:
                 html.append(w)
         else:
@@ -200,142 +166,71 @@ def build_colored_html(
     return " ".join(html)
 
 # ----------------------------
-# Sidebar controls (for IG explanation)
+# Sidebar controls
 # ----------------------------
 with st.sidebar:
     st.header("Explanation Controls")
     explain_switch = st.checkbox("Show BERT token-level explanation (IG)", value=False)
     top_k = st.slider("Top-K highlighted words", 10, 60, 30, 1)
-    min_abs_z = st.slider("|z|-threshold (intensity)", 0.0, 3.0, 0.6, 0.1)
-    show_dir = st.radio(
-        "Direction filter",
-        ["both", "fake_only", "real_only"],
-        index=0, horizontal=True
-    )
-    st.caption("Red = pushes FAKE, Blue = pushes REAL. Only applies to BERT branch.")
+    min_abs_z = st.slider("|z|-threshold", 0.0, 3.0, 0.6, 0.1)
+    show_dir = st.radio("Direction filter", ["both", "fake_only", "real_only"], index=0)
 
 # ----------------------------
-# UI: input + model choice
+# Input + model choice
 # ----------------------------
-user_text = st.text_area("Enter the news text to analyze:", height=220,
-                         placeholder="Paste a headline and/or body text here...")
-
-model_options = [
-    "Fusion (LR + NB)",
-    "Logistic Regression",
-    "Naive Bayes",
-    "SVM",
-    "BERT",
-    "Fusion (BERT + LR)"
-]
+user_text = st.text_area("Enter news text:", height=220)
+model_options = ["Fusion (LR + NB)", "Logistic Regression", "Naive Bayes", "SVM", "BERT", "Fusion (BERT + LR)"]
 model_choice = st.selectbox("Choose model / fusion:", model_options, index=0)
 
-st.caption("Note: BERT uses raw text; classic models use TF‑IDF preprocessing. "
-           "Long inputs are truncated to 256 tokens for BERT.")
-
 # ----------------------------
-# Action
+# Run prediction
 # ----------------------------
 if st.button("Analyze"):
     if not user_text.strip():
         st.warning("Please enter valid text before analyzing.")
         st.stop()
 
-    # --- Classic models branch ---
     if model_choice in ["Logistic Regression", "Naive Bayes", "SVM", "Fusion (LR + NB)"]:
         cleaned = preprocess(user_text)
         X = tfidf.transform([cleaned])
-
         if model_choice == "Fusion (LR + NB)":
             p_lr = lr_model.predict_proba(X)[0][1]
             p_nb = nb_model.predict_proba(X)[0][1]
             fake_prob = (p_lr + p_nb) / 2
         else:
-            mdl = {
-                "Logistic Regression": lr_model,
-                "Naive Bayes": nb_model,
-                "SVM": svm_model
-            }[model_choice]
+            mdl = {"Logistic Regression": lr_model, "Naive Bayes": nb_model, "SVM": svm_model}[model_choice]
             if hasattr(mdl, "predict_proba"):
                 fake_prob = mdl.predict_proba(X)[0][1]
             else:
-                # LinearSVC: decision_function -> sigmoid
                 score = mdl.decision_function(X)
                 fake_prob = float(1 / (1 + np.exp(-score))[0])
-
-        tok = mdl_obj = device = None  # not used
-
-    # --- BERT branch (and fusion) ---
+        tok = mdl_obj = device = None
     else:
-        # Load BERT (use secret token if the model is private)
-        token = st.secrets.get("HF_TOKEN") if "secrets" in dir(st) else None
-        tok, mdl, device = load_bert(HF_MODEL_ID, token=token)
-
+        tok, mdl, device = load_bert(HF_MODEL_ID, token=HF_TOKEN)
         p_bert = bert_prob_fake(user_text, tok, mdl, device)
         if model_choice == "BERT":
             fake_prob = p_bert
         else:
-            # Fusion with LR on TF-IDF
             cleaned = preprocess(user_text)
             X = tfidf.transform([cleaned])
             p_lr = lr_model.predict_proba(X)[0][1]
             fake_prob = (p_bert + p_lr) / 2
 
-    # ----------------------------
-    # Display result (probability + progress bar)
-    # ----------------------------
+    # Show result
     label = "🔴 FAKE" if fake_prob >= 0.5 else "🟢 REAL"
-    if fake_prob >= 0.5:
-        st.error(f"### Result: {label}")
-    else:
-        st.success(f"### Result: {label}")
-
-    st.markdown("#### 📊 Probability of FAKE")
     st.progress(int(fake_prob * 100))
     st.metric("P(FAKE)", f"{fake_prob * 100:.2f}%")
 
-    # ----------------------------
-    # TF-IDF keyword list + in-text highlight (always shown for readability)
-    # ----------------------------
+    # TF-IDF keywords
     cleaned_for_highlight = preprocess(user_text)
     vec = tfidf.transform([cleaned_for_highlight]).toarray()[0]
     feat_names = tfidf.get_feature_names_out()
     top_idx = vec.argsort()[::-1][:10]
     tfidf_words = [feat_names[i] for i in top_idx if vec[i] > 0]
+    st.write("Top TF-IDF keywords:", ", ".join(tfidf_words) if tfidf_words else "(none)")
 
-    st.markdown("#### 🧠 TF‑IDF Top Keywords")
-    st.write(", ".join(tfidf_words) if tfidf_words else "(No salient TF‑IDF terms)")
-
-    # In-text highlight of TF-IDF words (case-insensitive)
-    highlighted = user_text
-    for w in tfidf_words:
-        pattern = re.compile(rf"(?i)\b{re.escape(w)}\b")
-        highlighted = pattern.sub(
-            f"<span style='background-color:#ffcccc; color:#c00'><b>{w}</b></span>",
-            highlighted
-        )
-    st.markdown("#### 🎯 In‑Text Highlights (TF‑IDF)", unsafe_allow_html=True)
-    st.markdown(highlighted, unsafe_allow_html=True)
-
-    # ----------------------------
-    # BERT token-level explanation (optional, controlled by sidebar)
-    # Only run when BERT was involved and user enabled it
-    # ----------------------------
+    # Optional: BERT IG
     if (model_choice in ["BERT", "Fusion (BERT + LR)"]) and explain_switch:
-        with st.spinner("Computing token-level attributions (Integrated Gradients)..."):
-            words, scores = bert_ig_attributions(
-                user_text, tok, mdl, device,
-                max_len=256, target_label=1, n_steps=32
-            )
-            html = build_colored_html(
-                words, scores, top_k=top_k, min_abs_z=min_abs_z, show_dir=show_dir
-            )
-
-        st.markdown("#### 🔎 BERT Token‑Level Heatmap", unsafe_allow_html=True)
+        words, scores = bert_ig_attributions(user_text, tok, mdl, device, max_len=256)
+        html = build_colored_html(words, scores, top_k=top_k, min_abs_z=min_abs_z, show_dir=show_dir)
         st.markdown(html, unsafe_allow_html=True)
-        st.caption("Note: IG uses raw BERT tokens; TF‑IDF keywords above are for readability.")
-
-# ----------------------------
-# Footer
-# ----------------------------
-st.caption("© Fake News Detector • Classic ML + BERT • Educational demo")
