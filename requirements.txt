@@ -1,7 +1,8 @@
 streamlit
 scikit-learn
-nltk
-joblib
 numpy
+pandas
+nltk
 PyMuPDF
+fpdf
 matplotlib
