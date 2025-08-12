@@ -84,6 +84,8 @@ if model_choice == "Hybrid (LR + NB + SVM)":
 
 if "history" not in st.session_state:
     st.session_state.history = []
+story.append(Image(chart_path.name, width=400, height=200))
+story.append(Spacer(1, 12))
 
 if st.button("Run Prediction"):
     if not user_input.strip():
@@ -151,18 +153,33 @@ if st.session_state.history:
 
     # 📄 Generate PDF with ReportLab
     pdf_buffer = BytesIO()
-    doc = SimpleDocTemplate(pdf_buffer, pagesize=A4)
+    from reportlab.platypus import Image
+
+avg = df.groupby("Model")["Fake Probability"].mean()
+fig, ax = plt.subplots()
+avg.plot(kind="bar", ax=ax, color="#cc0000")
+ax.set_title("Average Fake Probability by Model")
+ax.set_ylabel("Probability")
+fig.tight_layout()
+chart_path = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+fig.savefig(chart_path.name)
+
+# PDF doc
+
+doc = SimpleDocTemplate(pdf_buffer, pagesize=A4)
     story = []
     styles = getSampleStyleSheet()
     custom_style = ParagraphStyle(
-        name='CustomStyle',
-        parent=styles['Normal'],
-        fontSize=11,
-        leading=14,
-        alignment=TA_LEFT
-    )
+    name='CustomStyle',
+    parent=styles['Normal'],
+    fontSize=11,
+    leading=16,
+    alignment=TA_LEFT,
+    textColor=colors.HexColor('#222222'),
+    spaceAfter=6
+)
 
-    story.append(Paragraph("<b>Fake News Detection Report</b>", styles['Title']))
+    story.append(Paragraph("<para align='center'><font size=20 color='navy'><b>📄 Fake News Detection Report</b></font></para>", styles['Title']))
     story.append(Spacer(1, 12))
 
     for _, row in df.iterrows():
@@ -174,7 +191,16 @@ if st.session_state.history:
         story.append(Paragraph(f"<b>Model:</b> {row['Model']}", custom_style))
         story.append(Paragraph(f"<b>Prediction:</b> {row['Prediction']}", custom_style))
         story.append(Paragraph(f"<b>Fake Probability:</b> {row['Fake Probability']*100:.2f}%", custom_style))
-        story.append(Paragraph(f"<b>Text:</b><br/>{text}", custom_style))
+        story.append(Paragraph(f"<b>Text:</b>", custom_style))
+story.append(Paragraph(text, ParagraphStyle(
+    name='BodyText',
+    parent=custom_style,
+    fontSize=11,
+    leading=16,
+    spaceBefore=6,
+    spaceAfter=12,
+    textColor=colors.HexColor('#000000')
+)))
         story.append(Spacer(1, 10))
 
     doc.build(story)
