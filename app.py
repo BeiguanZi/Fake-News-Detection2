@@ -77,7 +77,15 @@ st.markdown("Use machine learning to classify a news text as real or fake, and h
 # File upload and content extraction
 uploaded_file = st.file_uploader("📄 Upload TXT or PDF file (optional):", type=["txt", "pdf"])
 
-file_text = "
+file_text = ""
+if uploaded_file is not None:
+    if uploaded_file.type == "text/plain":
+        file_text = uploaded_file.read().decode("utf-8", errors="ignore")
+    elif uploaded_file.type == "application/pdf":
+        try:
+            import fitz  # PyMuPDF
+            with fitz.open(stream=uploaded_file.read(), filetype="pdf") as doc:
+                file_text = "
 ".join([page.get_text() for page in doc])
         except Exception as e:
             st.warning(f"Could not read PDF file: {e}")
