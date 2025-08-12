@@ -180,11 +180,10 @@ if st.session_state.history:
         pdf.ln(2)
 
     pdf_bytes = BytesIO()
-    pdf_bytes.write(pdf.output(dest='S').encode('latin1'))
+    pdf_bytes.write(pdf.output(dest='S').encode('latin1', errors='replace'))
     pdf_bytes.seek(0)
 
     st.download_button("📄 Download Report as PDF", pdf_bytes, "fake_news_report.pdf", mime="application/pdf")
-
     if st.button("🧹 Clear Prediction History"):
         st.session_state.history.clear()
         st.rerun()
