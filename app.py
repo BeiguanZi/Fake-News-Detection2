@@ -20,7 +20,7 @@ try:
     nltk.download("stopwords", quiet=True)
     stop_words = set(stopwords.words("english"))
 except Exception:
-    stop_words = {"a", "an", "the", "and", "or", "but", "if", "while", "with", "of", "to", "in", "on", "for", "at", "by", "from", "is", "are", "was", "were", "be", "been", "being", "as", "that", "this", "these", "those", "it", "its", "you", "your", "yours", "he", "she", "they", "them", "we", "us", "our", "ours"}
+    stop_words = set()
 
 stemmer = PorterStemmer()
 
@@ -98,8 +98,14 @@ if st.button("Run Prediction"):
         p = get_prob(model)
 
     label = "🔴 FAKE" if p >= 0.5 else "🟢 REAL"
-    st.markdown(f"<div style='padding:1em; border-left:4px solid {'#cc0000' if p>=0.5 else '#007a33'}'>
-                <h4>{label} NEWS</h4></div>", unsafe_allow_html=True)
+    st.markdown(
+        f"""
+        <div style='padding:1em; border-left:4px solid {"#cc0000" if p >= 0.5 else "#007a33"}'>
+            <h4>{label} NEWS</h4>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
     st.progress(int(p * 100))
     st.metric("Fake probability", f"{p*100:.2f}%")
 
@@ -162,7 +168,8 @@ if st.session_state.history:
 
     for _, row in df.iterrows():
         pdf.set_font("Arial", 'B', 11)
-        pdf.cell(0, 10, f"[{row['Timestamp']}]", ln=True)
+        pdf.cell(0, 10, f"[{row['Timestamp']}]")
+        pdf.ln(6)
         pdf.set_font("Arial", size=11)
         pdf.multi_cell(0, 8, (
             f"Model: {row['Model']}\n"
