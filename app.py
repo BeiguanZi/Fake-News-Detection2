@@ -77,15 +77,8 @@ st.markdown("Use machine learning to classify a news text as real or fake, and h
 # File upload and content extraction
 uploaded_file = st.file_uploader("📄 Upload TXT or PDF file (optional):", type=["txt", "pdf"])
 
-file_text = ""
-if uploaded_file is not None:
-    if uploaded_file.type == "text/plain":
-        file_text = uploaded_file.read().decode("utf-8", errors="ignore")
-    elif uploaded_file.type == "application/pdf":
-        try:
-            import fitz  # PyMuPDF
-            with fitz.open(stream=uploaded_file.read(), filetype="pdf") as doc:
-                file_text = "\n".join([page.get_text() for page in doc])
+file_text = "
+".join([page.get_text() for page in doc])
         except Exception as e:
             st.warning(f"Could not read PDF file: {e}")
 
@@ -212,16 +205,16 @@ if st.session_state.history:
         pdf.set_font("Arial", 'B', 11)
         pdf.cell(0, 10, f"[{row['Timestamp']}]", ln=True)
         pdf.set_font("Arial", size=11)
-        pdf.multi_cell(0, 8, (
-            f"Model: {row['Model']}
+        pdf.multi_cell(0, 8, \
+    f"Model: {row['Model']}
 "
-            f"Prediction: {row['Prediction']}
+    f"Prediction: {row['Prediction']}
 "
-            f"Fake Probability: {row['Fake Probability']*100:.2f}%
+    f"Fake Probability: {row['Fake Probability']*100:.2f}%
 "
-            f"Text: {row['Text']}
+    f"Text: {row['Text']}
 "
-        ))
+)
         pdf.ln(2)
 
     pdf_buffer = BytesIO()
