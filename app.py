@@ -1,3 +1,5 @@
+# ✅ Final app.py with Unicode-safe PDF export and visible highlighting
+
 import streamlit as st
 import joblib
 import numpy as np
@@ -118,11 +120,13 @@ if st.button("Run Prediction"):
 
     highlighted = user_input
     for word in top_tokens:
-        highlighted = re.sub(rf"(?i)\\b{re.escape(word)}\\b", f"<span style='background-color:#ffe6e6; color:#c00; font-weight:bold'>{word}</span>", highlighted)
+        highlighted = re.sub(
+            rf"(?i)\b{re.escape(word)}\b",
+            f"<mark style='background-color:#fff2cc; font-weight:bold'>{word}</mark>",
+            highlighted
+        )
 
-    st.markdown("""<div style='border-left:4px solid #c00; padding:1em; margin-top:1em;'>
-    <div style='white-space: pre-wrap;'>
-    """ + highlighted + """</div></div>""", unsafe_allow_html=True)
+    st.markdown("<div style='white-space: pre-wrap;'>" + highlighted + "</div>", unsafe_allow_html=True)
 
     st.session_state.history.append({
         "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
