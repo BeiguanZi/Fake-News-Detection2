@@ -3,3 +3,9 @@ scikit-learn
 nltk
 joblib
 numpy
+transformers==4.42.3
+torch
+accelerate>=0.31.0
+huggingface_hub
+captum
+PyPDF2
