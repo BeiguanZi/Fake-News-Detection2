@@ -74,7 +74,23 @@ if not model_dict:
 st.title("📰 Fake News Detection System")
 st.markdown("Use machine learning to classify a news text as real or fake, and highlight key tokens.")
 
-user_input = st.text_area("📝 Enter the news content to analyze:", height=200)
+# File upload and content extraction
+uploaded_file = st.file_uploader("📄 Upload TXT or PDF file (optional):", type=["txt", "pdf"])
+
+file_text = ""
+if uploaded_file is not None:
+    if uploaded_file.type == "text/plain":
+        file_text = uploaded_file.read().decode("utf-8", errors="ignore")
+    elif uploaded_file.type == "application/pdf":
+        try:
+            import fitz  # PyMuPDF
+            with fitz.open(stream=uploaded_file.read(), filetype="pdf") as doc:
+                file_text = "
+".join([page.get_text() for page in doc])
+        except Exception as e:
+            st.warning(f"Could not read PDF file: {e}")
+
+user_input = st.text_area("📝 Enter the news content to analyze:", value=file_text, height=200)
 options = list(model_dict.keys())
 default_index = options.index("Hybrid (LR + NB + SVM)") if "Hybrid (LR + NB + SVM)" in options else 0
 model_option = st.selectbox("🤖 Choose a model:", options, index=default_index)
@@ -122,9 +138,9 @@ if st.button("Run Prediction", use_container_width=True):
 
         label = "🔴 FAKE" if fake_prob >= 0.5 else "🟢 REAL"
         if fake_prob >= 0.5:
-            st.error(f"### Prediction: {label}")
+            st.markdown("""<div style='padding:1em; border-left:4px solid #cc0000; background:#ffe6e6'><h4>🔴 FAKE NEWS</h4></div>""", unsafe_allow_html=True)
         else:
-            st.success(f"### Prediction: {label}")
+            st.markdown("""<div style='padding:1em; border-left:4px solid #007a33; background:#e6fff2'><h4>🟢 REAL NEWS</h4></div>""", unsafe_allow_html=True)
 
         st.markdown("#### 📊 Predicted Probability of Fake News")
         st.progress(int(fake_prob * 100))
@@ -146,7 +162,7 @@ if st.button("Run Prediction", use_container_width=True):
                 highlighted_text
             )
 
-        st.markdown("#### 🧠 Highlighted Original Text (AI-style view)", unsafe_allow_html=True)
+        st.markdown("""<div style='padding:0.5em; border-left:4px solid #c00; background:#fff0f0'><strong>🧠 Highlighted Original Text (AI-style view)</strong></div>""", unsafe_allow_html=True)
         st.markdown(highlighted_text, unsafe_allow_html=True)
 
         st.session_state.history.append({
@@ -172,6 +188,44 @@ if st.session_state.history:
     buffer.seek(0)
     st.download_button("📥 Download Report as CSV", buffer, file_name="fake_news_predictions.csv", mime="text/csv")
 
+    # PDF report generation
+    from fpdf import FPDF
+
+    class PDF(FPDF):
+        def header(self):
+            self.set_font("Arial", 'B', 16)
+            self.set_text_color(0)
+            self.cell(0, 10, "Fake News Detection Report", ln=True, align='C')
+            self.ln(5)
+
+        def footer(self):
+            self.set_y(-15)
+            self.set_font("Arial", 'I', 8)
+            self.set_text_color(128)
+            self.cell(0, 10, f"Page {self.page_no()}", align='C')
+
+    pdf = PDF()
+    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.add_page()
+    pdf.set_font("Arial", size=12)
+
+    for idx, row in df.iterrows():
+        pdf.set_font("Arial", 'B', 11)
+        pdf.cell(0, 10, f"[{row['Timestamp']}]", ln=True)
+        pdf.set_font("Arial", size=11)
+        pdf.multi_cell(0, 8, f"Model: {row['Model']}
+Prediction: {row['Prediction']}
+Fake Probability: {row['Fake Probability']*100:.2f}%
+Text: {row['Text']}
+")
+        pdf.ln(2)
+
+    pdf_buffer = BytesIO()
+    pdf.output(pdf_buffer)
+    pdf_buffer.seek(0)
+
+    st.download_button("📄 Download Report as PDF", pdf_buffer, file_name="fake_news_report.pdf", mime="application/pdf")
+
     if st.button("🧹 Clear Prediction History"):
         st.session_state.history.clear()
-        st.success("Prediction history has been cleared.")
+        st.rerun()
