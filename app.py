@@ -7,11 +7,28 @@ import string
 from nltk.corpus import stopwords
 from nltk.stem import PorterStemmer
 
-nltk.download('stopwords')
-stop_words = set(stopwords.words('english'))
+# ------------------------------
+# Page Configuration
+# ------------------------------
+st.set_page_config(page_title="Fake News Detection System", layout="centered")
+
+# ------------------------------
+# NLTK Setup (Stopwords + Stemmer)
+# ------------------------------
+try:
+    nltk.download('stopwords', quiet=True)
+    stop_words = set(stopwords.words('english'))
+except Exception:
+    # Fallback minimal stopword set if download is unavailable
+    stop_words = {
+        'a','an','the','and','or','but','if','while','with','of','to','in','on','for','at','by','from','is','are','was','were','be','been','being','as','that','this','these','those','it','its','you','your','yours','he','she','they','them','we','us','our','ours'
+    }
+
 stemmer = PorterStemmer()
 
-def preprocess(text):
+
+def preprocess(text: str) -> str:
+    """Basic preprocessing: lowercase, remove URLs/mentions, keep letters, remove stopwords, apply stemming."""
     text = text.lower()
     text = re.sub(r"http\S+|www\S+|@\S+", "", text)
     text = re.sub(r"[^a-z\s]", "", text)
@@ -19,44 +36,96 @@ def preprocess(text):
     cleaned = [stemmer.stem(word) for word in tokens if word not in stop_words]
     return " ".join(cleaned)
 
-# 加载模型
-tfidf = joblib.load("tfidf_vectorizer.pkl")
-lr_model = joblib.load("logistic_model.pkl")
-nb_model = joblib.load("naive_bayes_model.pkl")
-svm_model = joblib.load("svm_model.pkl")
 
-model_dict = {
-    "Logistic Regression": lr_model,
-    "Naive Bayes": nb_model,
-    "SVM": svm_model,
-    "混合模型（LR + NB）": None
-}
+# ------------------------------
+# Safe artifact loading helpers
+# ------------------------------
 
-# 🧠 页面设置
-st.set_page_config(page_title="假新闻识别系统", layout="centered")
-st.title("📰 假新闻智能识别系统")
-st.markdown("通过机器学习判断一段新闻是真实还是虚假，并标出模型重点关注的词汇。")
+def safe_load(path: str, human_name: str):
+    try:
+        return joblib.load(path)
+    except Exception as e:
+        st.error(f"Missing or unreadable {human_name}: '{path}'. Error: {e}")
+        return None
 
-# ✍️ 文本输入框
-user_input = st.text_area("📝 请输入你要检测的新闻内容：", height=200, help="可输入完整正文或简要标题")
+# NOTE: Keep file names consistent with your repository artifacts.
+# Expecting: tfidf_vectorizer.pkl, logistic_model.pkl, naive_bayes_model.pkl, svm_model.pkl
 
-# 模型选择（默认选混合）
-model_option = st.selectbox("🤖 选择分类模型：", list(model_dict.keys()), index=3)
+# Load artifacts
+# (Using safe loaders so the app shows friendly errors instead of crashing.)
+tfidf = safe_load("tfidf_vectorizer.pkl", "TF-IDF vectorizer")
+lr_model = safe_load("logistic_model.pkl", "Logistic Regression model")
+nb_model = safe_load("naive_bayes_model.pkl", "Naive Bayes model")
+svm_model = safe_load("svm_model.pkl", "SVM model")
 
-# 🚀 按钮触发
-if st.button("开始检测"):
+# If TF-IDF is missing, classic models cannot run
+if tfidf is None:
+    st.stop()
+
+# Build model options based on what is actually available
+model_dict = {}
+if lr_model is not None:
+    model_dict["Logistic Regression"] = lr_model
+if nb_model is not None:
+    model_dict["Naive Bayes"] = nb_model
+if svm_model is not None:
+    model_dict["SVM"] = svm_model
+# Hybrid option (LR + NB) only if both are available
+if lr_model is not None and nb_model is not None:
+    model_dict["Hybrid (LR + NB)"] = None
+
+if not model_dict:
+    st.error("No models are available. Please upload the required .pkl files.")
+    st.stop()
+
+
+# ------------------------------
+# UI
+# ------------------------------
+st.title("📰 Fake News Detection System")
+st.markdown("Use machine learning to classify a news text as real or fake, and highlight key tokens.")
+
+user_input = st.text_area(
+    "📝 Enter the news content to analyze:", height=200,
+    help="You can paste a full article body or a short headline."
+)
+
+# Default to Hybrid if available; otherwise default to first available
+options = list(model_dict.keys())
+default_index = options.index("Hybrid (LR + NB)") if "Hybrid (LR + NB)" in options else 0
+model_option = st.selectbox("🤖 Choose a model:", options, index=default_index)
+
+# Show weight slider for the Hybrid (LR + NB)
+if model_option == "Hybrid (LR + NB)":
+    w_lr = st.slider("Logistic Regression weight (w_LR)", min_value=0.0, max_value=1.0, value=0.50, step=0.05)
+    w_nb = 1.0 - w_lr
+    st.caption(f"Hybrid weights → LR: {w_lr:.2f}, NB: {w_nb:.2f}")
+
+
+# ------------------------------
+# Inference
+# ------------------------------
+if st.button("Run Prediction", use_container_width=True):
 
     if not user_input.strip():
-        st.warning("请输入有效文本后再开始检测。")
+        st.warning("Please enter some text before running the prediction.")
     else:
         cleaned_input = preprocess(user_input)
         x_input = tfidf.transform([cleaned_input])
 
-        # 模型推理
-        if model_option == "混合模型（LR + NB）":
-            prob_lr = lr_model.predict_proba(x_input)[0][1]
-            prob_nb = nb_model.predict_proba(x_input)[0][1]
-            fake_prob = (prob_lr + prob_nb) / 2
+        # --- Predict ---
+        if model_option == "Hybrid (LR + NB)":
+            # Weighted ensemble: P(fake) = w_lr * P_lr + (1 - w_lr) * P_nb
+            prob_lr = lr_model.predict_proba(x_input)[0][1] if hasattr(lr_model, "predict_proba") else None
+            prob_nb = nb_model.predict_proba(x_input)[0][1] if hasattr(nb_model, "predict_proba") else None
+            if prob_lr is None:
+                # Fallback using decision_function -> logistic
+                decision_lr = lr_model.decision_function(x_input)
+                prob_lr = 1 / (1 + np.exp(-decision_lr))[0]
+            if prob_nb is None:
+                decision_nb = nb_model.decision_function(x_input)
+                prob_nb = 1 / (1 + np.exp(-decision_nb))[0]
+            fake_prob = w_lr * prob_lr + (1.0 - w_lr) * prob_nb
         else:
             model = model_dict[model_option]
             if hasattr(model, "predict_proba"):
@@ -65,38 +134,38 @@ if st.button("开始检测"):
                 decision = model.decision_function(x_input)
                 fake_prob = 1 / (1 + np.exp(-decision))[0]
 
-        # 🧾 判定结果
-        label = "🔴 假新闻" if fake_prob >= 0.5 else "🟢 真实新闻"
+        # --- Display prediction result ---
+        label = "🔴 FAKE" if fake_prob >= 0.5 else "🟢 REAL"
         if fake_prob >= 0.5:
-            st.error(f"### 🧾 判定结果：{label}")
+            st.error(f"### Prediction: {label}")
         else:
-            st.success(f"### 🧾 判定结果：{label}")
+            st.success(f"### Prediction: {label}")
 
-        # 🎯 显示预测概率进度条
-        st.markdown("#### 📊 假新闻概率预测")
+        # --- Probability progress ---
+        st.markdown("#### 📊 Predicted Probability of Fake News")
         st.progress(int(fake_prob * 100))
-        st.metric("模型判断该文本为假新闻的概率", f"{fake_prob * 100:.2f}%")
+        st.metric("Model-estimated probability of FAKE", f"{fake_prob * 100:.2f}%")
 
-        # 🔍 关键词提取 + 高亮
+        # --- Top TF-IDF tokens (for highlighting only) ---
         feature_names = tfidf.get_feature_names_out()
         input_vector = x_input.toarray()[0]
         top_indices = input_vector.argsort()[::-1][:10]
         highlight_words = [feature_names[i] for i in top_indices if input_vector[i] > 0]
 
-        st.markdown("#### 🧠 模型关注关键词：")
-        st.write(", ".join(highlight_words))
+        st.markdown("#### 🧠 Top TF-IDF Tokens")
+        st.write(", ".join(highlight_words) if highlight_words else "(No tokens with non-zero TF-IDF weight)")
 
-        # ✨ 原文关键词染色显示
+        # --- Inline highlight in the original text ---
         highlighted_text = user_input
         for word in highlight_words:
-            pattern = re.compile(rf"(?i)\b{re.escape(word)}\b")
+            pattern = re.compile(rf"(?i)\\b{re.escape(word)}\\b")
             highlighted_text = pattern.sub(
                 f"<span style='background-color:#ffcccc; color:#c00'><b>{word}</b></span>",
                 highlighted_text
             )
 
-        st.markdown("#### 🧠 关键词高亮原文展示（仿 AI 检测工具）", unsafe_allow_html=True)
+        st.markdown("#### 🧠 Highlighted Original Text (AI-style view)", unsafe_allow_html=True)
         st.markdown(highlighted_text, unsafe_allow_html=True)
 
-        # 💡 展示提示
-        st.caption("关键词仅基于 TF-IDF 提取，并不代表最终判定依据，仅供参考。")
+        # --- Note ---
+        st.caption("Top tokens are extracted by TF-IDF and are for reference only. They are not guaranteed to reflect the final decision basis.")
