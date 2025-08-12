@@ -1,5 +1,3 @@
-# ✅ Final app.py with Unicode-safe PDF export and visible highlighting
-
 import streamlit as st
 import joblib
 import numpy as np
@@ -12,9 +10,13 @@ import matplotlib.pyplot as plt
 from datetime import datetime
 from io import BytesIO
 import tempfile
-from fpdf import FPDF
 from nltk.corpus import stopwords
 from nltk.stem import PorterStemmer
+from reportlab.lib.pagesizes import A4
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.enums import TA_LEFT
+from reportlab.lib import colors
 
 st.set_page_config(page_title="Fake News Detection System", layout="centered")
 
@@ -133,7 +135,8 @@ if st.button("Run Prediction"):
         "Model": model_choice,
         "Prediction": label,
         "Fake Probability": round(p, 4),
-        "Text": user_input[:100].replace("\n", " ") + ("..." if len(user_input) > 100 else "")
+        "Text": user_input,
+        "Top Tokens": ", ".join(top_tokens)
     })
 
 if st.session_state.history:
@@ -146,53 +149,37 @@ if st.session_state.history:
     csv.seek(0)
     st.download_button("📥 Download CSV", csv, "predictions.csv")
 
-    avg = df.groupby("Model")["Fake Probability"].mean()
-    fig, ax = plt.subplots()
-    avg.plot(kind="bar", ax=ax)
-    ax.set_ylabel("Fake Probability")
-    fig.tight_layout()
-    bar_chart = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
-    fig.savefig(bar_chart.name)
+    # 📄 Generate PDF with ReportLab
+    pdf_buffer = BytesIO()
+    doc = SimpleDocTemplate(pdf_buffer, pagesize=A4)
+    story = []
+    styles = getSampleStyleSheet()
+    custom_style = ParagraphStyle(
+        name='CustomStyle',
+        parent=styles['Normal'],
+        fontSize=11,
+        leading=14,
+        alignment=TA_LEFT
+    )
 
-    fig2, ax2 = plt.subplots()
-    df["Prediction"].value_counts().plot.pie(autopct="%1.1f%%", ax=ax2)
-    ax2.set_ylabel("")
-    pie_chart = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
-    fig2.savefig(pie_chart.name)
-
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_font("Arial", size=12)
-    pdf.cell(200, 10, txt="Fake News Detection Report", ln=1, align='C')
-    pdf.image(bar_chart.name, w=170)
-    pdf.ln(5)
-    pdf.image(pie_chart.name, w=140)
-    pdf.ln(5)
-
-    def safe_str(text):
-        try:
-            return text.encode('latin1').decode('latin1')
-        except UnicodeEncodeError:
-            return text.encode('latin1', errors='ignore').decode('latin1')
+    story.append(Paragraph("<b>Fake News Detection Report</b>", styles['Title']))
+    story.append(Spacer(1, 12))
 
     for _, row in df.iterrows():
-        pdf.set_font("Arial", 'B', 11)
-        pdf.cell(0, 10, safe_str(f"[{row['Timestamp']}]"))
-        pdf.ln(6)
-        pdf.set_font("Arial", size=11)
-        pdf.multi_cell(0, 8, safe_str(
-            f"Model: {row['Model']}\n"
-            f"Prediction: {row['Prediction']}\n"
-            f"Fake Probability: {row['Fake Probability']*100:.2f}%\n"
-            f"Text: {row['Text']}\n"
-        ))
-        pdf.ln(2)
+        text = row['Text']
+        for token in row['Top Tokens'].split(", "):
+            text = re.sub(rf"(?i)\b{re.escape(token)}\b", f"<font color='red'><b>{token.upper()}</b></font>", text)
 
-    pdf_bytes = BytesIO()
-    pdf_bytes.write(pdf.output(dest='S').encode('latin1', errors='ignore'))
-    pdf_bytes.seek(0)
+        story.append(Paragraph(f"<b>Timestamp:</b> {row['Timestamp']}", custom_style))
+        story.append(Paragraph(f"<b>Model:</b> {row['Model']}", custom_style))
+        story.append(Paragraph(f"<b>Prediction:</b> {row['Prediction']}", custom_style))
+        story.append(Paragraph(f"<b>Fake Probability:</b> {row['Fake Probability']*100:.2f}%", custom_style))
+        story.append(Paragraph(f"<b>Text:</b><br/>{text}", custom_style))
+        story.append(Spacer(1, 10))
 
-    st.download_button("📄 Download Report as PDF", pdf_bytes, "fake_news_report.pdf", mime="application/pdf")
+    doc.build(story)
+    pdf_buffer.seek(0)
+    st.download_button("📄 Download Report as PDF", pdf_buffer, file_name="fake_news_report.pdf", mime="application/pdf")
 
     if st.button("🧹 Clear Prediction History"):
         st.session_state.history.clear()
